@@ -7,41 +7,56 @@ const PublicGoogleDoc = ({ fileId, apiKey }) => {
   useEffect(() => {
     const fetchDoc = async () => {
       try {
-        // Fetch HTML từ Google Docs
         const res = await fetch(
           `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=text/html&key=${apiKey}`
         );
         if (!res.ok) throw new Error("Không thể tải nội dung tài liệu.");
         const htmlText = await res.text();
-        setHtml(htmlText);
-
-        // Tìm các URL ảnh trong HTML
+  
+        // Tìm URL ảnh
         const imageUrls = Array.from(htmlText.matchAll(/src="(https:\/\/[^\s]+)"/g))
           .map(match => match[1]);
-
+  
+        let updatedHtml = htmlText;
+  
         if (imageUrls.length > 0) {
-          // Gửi URL ảnh về backend để lưu 
-          const imageRes = await fetch('http://localhost:5000/api/download-images', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ imageUrls }),
+          const cachedMap = JSON.parse(localStorage.getItem(`imageCache_${fileId}`) || '{}');
+  
+          const urlsToDownload = imageUrls.filter(url => !cachedMap[url]);
+  
+          let updatedMap = { ...cachedMap };
+  
+          if (urlsToDownload.length > 0) {
+            const imageRes = await fetch('http://localhost:5000/api/download-images', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ imageUrls: urlsToDownload }),
+            });
+  
+            const data = await imageRes.json();
+  
+            urlsToDownload.forEach((url, index) => {
+              const fullUrl = data.paths[index]; 
+              updatedMap[url] = fullUrl;
+            });
+  
+            localStorage.setItem(`imageCache_${fileId}`, JSON.stringify(updatedMap));
+          }
+  
+          // Thay thế toàn bộ URL ảnh trong HTML
+          imageUrls.forEach((originalUrl) => {
+            if (updatedMap[originalUrl]) {
+              updatedHtml = updatedHtml.replace(originalUrl, updatedMap[originalUrl]);
+            }
           });
-
-          const data = await imageRes.json();
-          console.log('Saved image URLs:', data.paths);
-          // Thay các URL ảnh trong HTML bằng đường dẫn mới
-          let updatedHtml = htmlText;
-          data.paths.forEach((savedPath, index) => {
-            const fullUrl = `http://localhost:5000${savedPath}`;
-            updatedHtml = updatedHtml.replace(imageUrls[index], fullUrl);
-          });
-          setHtml(updatedHtml);
         }
+  
+        setHtml(updatedHtml);
       } catch (err) {
         setError(err.message);
       }
     };
-
+  
     fetchDoc();
   }, [fileId, apiKey]);
 
